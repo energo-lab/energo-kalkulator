@@ -131,8 +131,8 @@ function runModel(I) {
     const peakCutKw = Math.max(0, peakOrig - peakNew);
     const peakSavings = (peakCutKw / 1000) * I.resCapFee * 12;
 
-    // Spot trading bonus (simplified: BESS arbitrage)
-    const spotBonus = I.bessKwh > 0 ? effCap * 0.3 * I.spotSpread * 365 / 1000 * bessDeg : 0;
+    // Spotová arbitráž (EMS): využitelná kapacita × arbitrážní cykly/den × spread × round-trip účinnost
+    const spotBonus = I.bessKwh > 0 ? effCap * I.arbCycles * I.spotSpread / 1000 * I.bessEff * 365 : 0;
 
     // Revenue
     const scRev = totalSC * (I.elPrice + I.distrib) / 1000;
@@ -365,7 +365,7 @@ export default function App() {
     annualMwh: 400, wdRatio: 0.75,
     elPrice: 2900, distrib: 500, resCapFee: 180000, feedIn: 1400,
     opex: 1.5, insurance: 0.3,
-    spotSpread: 1800,
+    spotSpread: 1800, arbCycles: 0.5,
     deprMethod: "accelerated", deprYears: 10,
   });
 
@@ -620,7 +620,8 @@ export default function App() {
                   <Inp label="Cena silové složky" value={I.elPrice} onChange={v => s("elPrice",v)} unit="Kč/MWh" step={100} />
                   <Inp label="Variabilní distribuce" value={I.distrib} onChange={v => s("distrib",v)} unit="Kč/MWh" step={50} />
                   <Inp label="Výkupní cena přetoků" value={I.feedIn} onChange={v => s("feedIn",v)} unit="Kč/MWh" step={50} />
-                  <Inp label="Spot spread (Baterie)" value={I.spotSpread} onChange={v => s("spotSpread",v)} unit="Kč/MWh" step={100} hint="Průměrný cenový diferenciál pro arbitráž" />
+                  <Inp label="Spot spread (Baterie)" value={I.spotSpread} onChange={v => s("spotSpread",v)} unit="Kč/MWh" step={100} hint="Průměrný denní cenový diferenciál nákup/prodej na spotovém trhu" />
+                  <Inp label="Arbitrážní cykly / den" value={I.arbCycles} onChange={v => s("arbCycles",v)} unit="cykly/den" step={0.1} hint="Kolik cyklů denně EMS prožene baterií navíc pro spotovou arbitráž (nad rámec vlastní spotřeby). Round-trip účinnost 92 % se započítá automaticky." />
                   <Inp label="OPEX" value={I.opex} onChange={v => s("opex",v)} unit="% CAPEX/r" step={0.1} />
                   <Inp label="Pojištění" value={I.insurance} onChange={v => s("insurance",v)} unit="% CAPEX/r" step={0.1} />
                   <Sel label="Metoda odpisů" value={I.deprMethod} onChange={v => s("deprMethod",v)} options={[
