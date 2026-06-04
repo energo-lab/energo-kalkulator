@@ -39,6 +39,29 @@ function buildLoadProfile(annualMwh, wdRatio) {
   };
 }
 
+/* Daňové odpisy: rovnoměrné (§31 ZDP) nebo zrychlené (§32 ZDP).
+   Zrychlené používá koeficienty k1 = doba odpisování, k2 = doba + 1
+   (platí pro standardní odpisové skupiny dle přílohy č. 1 ZDP). */
+function buildDeprSchedule(base, years, method) {
+  const sched = Array(LIFETIME).fill(0);
+  if (base <= 0 || years <= 0) return sched;
+  const n = Math.min(years, LIFETIME);
+  if (method === "accelerated") {
+    const k2 = years + 1; // koeficient pro další roky
+    let resid = base;
+    sched[0] = base / years;        // 1. rok: vstupní cena / k1 (k1 = doba)
+    resid -= sched[0];
+    for (let y = 2; y <= n; y++) {
+      const d = (2 * resid) / (k2 - (y - 1)); // 2 × zůstatková cena / (k2 − počet let)
+      sched[y - 1] = d;
+      resid -= d;
+    }
+  } else {
+    for (let y = 1; y <= n; y++) sched[y - 1] = base / years; // rovnoměrně
+  }
+  return sched;
+}
+
 /* ══════════════════════════════════════════════════
    CORE FINANCIAL MODEL
    ══════════════════════════════════════════════════ */
@@ -50,6 +73,7 @@ function runModel(I) {
   const load = buildLoadProfile(I.annualMwh, I.wdRatio);
   const cRate = 0.5;
   const bessMaxP = I.bessKwh * cRate;
+  const deprSched = buildDeprSchedule(netCapex, I.deprYears, I.deprMethod);
   const yearly = [];
   let cumCF = -netCapex, pbp = null;
   let cumCFpre = -netCapex, pbpPre = null;
@@ -122,7 +146,7 @@ function runModel(I) {
     const totalCost = opex + ins + replacement;
 
     // Tax & depreciation
-    const depr = y <= I.deprYears ? netCapex / I.deprYears : 0;
+    const depr = deprSched[y - 1];
     const ebt = totalRev - totalCost - depr;
     const tax = Math.max(0, ebt * I.taxRate / 100);
     const cf = ebt - tax + depr - replacement;
@@ -225,6 +249,8 @@ function runModel(I) {
   return {
     netCapex, yearly, pbp, pbpPre, lcoe: Math.round(lcoe * 100) / 100,
     npv: Math.round(npv), irr: Math.round(irr * 1000) / 10,
+    taxShieldY1: Math.round(yearly[0].depr * I.taxRate / 100),
+    taxShield25: Math.round(yearly.reduce((a, y) => a + y.depr, 0) * I.taxRate / 100),
     sensitivity, heatmap, monthlyProd,
     dailyCyc, annCyc, bessLife, ppaYearly,
     y1: yearly[0],
@@ -332,6 +358,7 @@ export default function App() {
     elPrice: 3200, distrib: 450, resCapFee: 180000, feedIn: 800,
     opex: 1.5, insurance: 0.3,
     spotSpread: 1200,
+    deprMethod: "linear", deprYears: 10,
   });
 
   const [tab, setTab] = useState("tech");
@@ -355,7 +382,7 @@ export default function App() {
   }, [I.bessKwh, I.annualMwh]);
 
   const R = useMemo(() => runModel({
-    ...I, wacc: 5, deprYears: 10, taxRate: 21,
+    ...I, wacc: 5, taxRate: 21,
     bessEff: batteryParams.bessEff,
     bessCycles: batteryParams.bessCycles,
     bessReplCost: batteryParams.bessReplCost,
@@ -511,6 +538,31 @@ export default function App() {
                   <Inp label="Spot spread (Baterie)" value={I.spotSpread} onChange={v => s("spotSpread",v)} unit="Kč/MWh" step={100} hint="Průměrný cenový diferenciál pro arbitráž" />
                   <Inp label="OPEX" value={I.opex} onChange={v => s("opex",v)} unit="% CAPEX/r" step={0.1} />
                   <Inp label="Pojištění" value={I.insurance} onChange={v => s("insurance",v)} unit="% CAPEX/r" step={0.1} />
+                  <Sel label="Metoda odpisů" value={I.deprMethod} onChange={v => s("deprMethod",v)} options={[
+                    {v:"linear", l:"Rovnoměrné (§31 ZDP) – stejný odpis"},
+                    {v:"accelerated", l:"Zrychlené (§32 ZDP) – přední zatížení"},
+                  ]} />
+                  <Sel label="Odpisová skupina / doba" value={String(I.deprYears)} onChange={v => s("deprYears", parseInt(v))} options={[
+                    {v:"5", l:"2. skupina – 5 let (měniče, baterie)"},
+                    {v:"10", l:"3. skupina – 10 let (FV panely)"},
+                    {v:"20", l:"4. skupina – 20 let (konstrukce)"},
+                  ]} />
+                  <div style={{ background: C.bg, borderRadius: 6, padding: 10, marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: C.muted, marginBottom: 6, fontFamily: fontSans, fontWeight: 600 }}>ODPISY & DAŇOVÝ ŠTÍT</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 10, fontFamily: font }}>
+                      <div><span style={{color: C.dim}}>Odpis rok 1:</span> <b style={{color: C.cyan}}>{fmtCZK(R.yearly[0].depr)}</b></div>
+                      <div><span style={{color: C.dim}}>Daň. štít rok 1:</span> <b style={{color: C.green}}>{fmtCZK(R.taxShieldY1)}</b></div>
+                      <div><span style={{color: C.dim}}>NPV (po dani):</span> <b style={{color: R.npv >= 0 ? C.green : C.red}}>{fmtCZK(R.npv)}</b></div>
+                      <div><span style={{color: C.dim}}>IRR:</span> <b style={{color: C.accentBright}}>{R.irr} %</b></div>
+                      <div><span style={{color: C.dim}}>Návratnost po dani:</span> <b style={{color: C.purple}}>{R.pbp || ">25"} let</b></div>
+                      <div><span style={{color: C.dim}}>Daň. štít 25 let:</span> <b style={{color: C.green}}>{fmtCZK(R.taxShield25)}</b></div>
+                    </div>
+                    <div style={{ fontSize: 9, color: C.dim, marginTop: 6 }}>
+                      {I.deprMethod === "accelerated"
+                        ? "Zrychlené odpisy (§32) přesouvají daňový štít do prvních let → vyšší NPV/IRR a kratší poztaňová návratnost."
+                        : "Rovnoměrné odpisy (§31): stejná výše odpisu po celou dobu odpisování."}
+                    </div>
+                  </div>
                 </>}
 
               </div>
