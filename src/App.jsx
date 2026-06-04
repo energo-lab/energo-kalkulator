@@ -468,7 +468,7 @@ export default function App() {
         {/* ═══ HLAVIČKA JEN PRO TISK/PDF ═══ */}
         <div className="print-only" style={{ marginBottom: 16, paddingBottom: 10, borderBottom: `2px solid ${C.accent}` }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.white }}>ENERGO GROUP — Orientační návrh FVE + Baterie</div>
-          {I.customer && <div style={{ fontSize: 14, fontWeight: 700, color: C.accent, marginTop: 4 }}>Cenová nabídka pro: {I.customer}</div>}
+          {I.customer && <div style={{ fontSize: 14, fontWeight: 700, color: C.accent, marginTop: 4 }}>Zákazník: {I.customer}</div>}
           <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
             FVE {I.pvKwp} kWp · Baterie {I.bessKwh} kWh · Roční odběr {I.annualMwh} MWh · Vygenerováno {new Date().toLocaleDateString("cs-CZ")}
           </div>
@@ -477,7 +477,7 @@ export default function App() {
         {/* ═══ ZÁKAZNÍK + EXPORT / TISK ═══ */}
         <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>Cenová nabídka pro:</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>Zákazník</span>
             <input value={I.customer} onChange={e => s("customer", e.target.value)} placeholder="Jméno zákazníka / společnosti"
               style={{ minWidth: 260, padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.white, fontSize: 14, fontWeight: 600, fontFamily: fontSans, outline: "none" }}
               onFocus={e => e.target.style.borderColor = C.accent} onBlur={e => e.target.style.borderColor = C.border} />
