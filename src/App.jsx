@@ -634,7 +634,7 @@ export default function App() {
             {chart === "cashflow" && (
               <ChartCard title="Kumulativní Cash Flow (po dani, vč. odpisů)" icon="📈">
                 <ResponsiveContainer width="100%" height={320}>
-                  <ComposedChart data={R.yearly} margin={{top:10,right:10,left:5,bottom:0}}>
+                  <ComposedChart data={R.yearly} margin={{top:28,right:16,left:5,bottom:8}}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
                     <XAxis dataKey="year" stroke={C.dim} fontSize={10} tickLine={false} />
                     <YAxis stroke={C.dim} fontSize={9} tickFormatter={v=>`${(v/1e6).toFixed(1)}M`} tickLine={false} />
@@ -643,7 +643,7 @@ export default function App() {
                     <ReferenceLine y={0} stroke={C.dim} strokeWidth={2} />
                     {R.pbp && <ReferenceLine x={R.pbp} stroke={C.green} strokeDasharray="5 5" label={{value:`Návratnost: ${R.pbp} let`,fill:C.green,fontSize:10,position:"top"}} />}
                     {I.bessKwh > 0 && Array.from({length: Math.max(0, Math.ceil(LIFETIME / batteryParams.bessReplYear) - 1)}, (_, i) => (i + 1) * batteryParams.bessReplYear).filter(yr => yr < LIFETIME).map(yr => (
-                      <ReferenceLine key={yr} x={yr} stroke={C.red} strokeDasharray="3 3" label={{value:"Výměna baterie",fill:C.red,fontSize:9,position:"bottom"}} />
+                      <ReferenceLine key={yr} x={yr} stroke={C.red} strokeDasharray="3 3" label={{value:"Výměna baterie",fill:C.red,fontSize:9,position:"insideBottom",offset:12}} />
                     ))}
                     <Bar dataKey="cf" name="Roční Cash Flow (po dani)" fill={C.blue} opacity={0.35} radius={[2,2,0,0]} />
                     <Line dataKey="cumCF" name="Kumulativní CF (po dani)" stroke={C.accentBright} strokeWidth={2.5} dot={false} />
