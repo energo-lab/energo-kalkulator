@@ -7,7 +7,7 @@ import {
 /* ══════════════════════════════════════════════════
    CONSTANTS & HELPERS
    ══════════════════════════════════════════════════ */
-const LIFETIME = 25;
+const LIFETIME = 30;
 const PV_DEG = 0.005;
 const MONTHS = ["Led","Úno","Bře","Dub","Kvě","Čvn","Čvc","Srp","Zář","Říj","Lis","Pro"];
 const MONTHLY_IRRADIANCE = [0.03,0.05,0.08,0.10,0.13,0.13,0.13,0.12,0.09,0.06,0.04,0.04];
@@ -93,7 +93,8 @@ function runModel(I) {
     }
 
     // BESS simulation with degradation
-    const bessDeg = I.bessKwh > 0 ? Math.max(0.7, 1 - 0.02 * (y - 1)) : 0;
+    const ySinceRepl = I.bessReplYear > 0 ? (y - 1) % I.bessReplYear : (y - 1);
+    const bessDeg = I.bessKwh > 0 ? Math.max(0.7, 1 - 0.02 * ySinceRepl) : 0;
     const effCap = I.bessKwh * bessDeg;
     let soc = 0, charged = 0, discharged = 0;
     // Charge from surplus
@@ -142,7 +143,9 @@ function runModel(I) {
     const opex = netCapex * I.opex / 100;
     const ins = netCapex * I.insurance / 100;
     let replacement = 0;
-    if (y === I.bessReplYear && I.bessKwh > 0) replacement = I.bessReplCost;
+    if (I.bessKwh > 0 && I.bessReplYear > 0 && y % I.bessReplYear === 0 && y < LIFETIME) {
+      replacement = Math.round(I.bessKwh * I.bessPriceToday * Math.pow(1 - I.bessDecline, y));
+    }
     const totalCost = opex + ins + replacement;
 
     // Tax & depreciation
@@ -205,7 +208,7 @@ function runModel(I) {
       sCum += cfPre2;
       if (!sPbp && sCum >= 0) sPbp = y;
     }
-    sensitivity.push({ delta: d, label: `${d >= 0 ? "+" : ""}${d}%`, cumCF: Math.round(sCum), pbp: sPbp || 25 });
+    sensitivity.push({ delta: d, label: `${d >= 0 ? "+" : ""}${d}%`, cumCF: Math.round(sCum), pbp: sPbp || LIFETIME });
   }
 
   // Hourly heatmap data
@@ -226,7 +229,7 @@ function runModel(I) {
   // BESS lifecycle
   const dailyCyc = I.bessKwh > 0 ? 2 : 0;
   const annCyc = Math.round(dailyCyc * 365);
-  const bessLife = I.bessKwh > 0 ? Math.min(20, Math.round(I.bessCycles / Math.max(1, annCyc))) : 0;
+  const bessLife = I.bessKwh > 0 ? I.bessReplYear : 0;
 
   // PPA comparison
   const ppaYearly = [];
@@ -373,7 +376,7 @@ export default function App() {
   const batteryParams = useMemo(() => {
     const bessEff = 0.92;
     const bessCycles = 8000;
-    const bessReplYear = 10;
+    const bessReplYear = 13;
     const pricePerKwhToday = 6500;
     const annualDecline = 0.10; // 10% meziroční pokles ceny baterií
     const pricePerKwhAtRepl = Math.round(pricePerKwhToday * Math.pow(1 - annualDecline, bessReplYear));
@@ -391,6 +394,8 @@ export default function App() {
     bessCycles: batteryParams.bessCycles,
     bessReplCost: batteryParams.bessReplCost,
     bessReplYear: batteryParams.bessReplYear,
+    bessPriceToday: batteryParams.pricePerKwhToday,
+    bessDecline: 0.10,
     ppaPrice: 2400, ppaEsc: 2.5,
   }), [I, batteryParams]);
 
@@ -475,7 +480,7 @@ export default function App() {
         <div className="kpi-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
           <KPI label="Čistý CAPEX" value={fmt(R.netCapex)} unit="Kč" color={C.accent} sub={`Dotace ${fmt(I.subsidy)} Kč`}
             info="CAPEX (Capital Expenditure) = celková investice. Čistý CAPEX = investice + úprava trafostanice − dotace." />
-          <KPI label="Návratnost" value={R.pbp || ">25"} unit="let" color={R.pbp && R.pbp <= 8 ? C.green : R.pbp ? C.accentBright : C.red} sub="po zdanění, vč. odpisů"
+          <KPI label="Návratnost" value={R.pbp || ">30"} unit="let" color={R.pbp && R.pbp <= 8 ? C.green : R.pbp ? C.accentBright : C.red} sub="po zdanění, vč. odpisů"
             info="Doba, za kterou kumulovaný čistý peněžní tok po zdanění (včetně daňového štítu z odpisů) pokryje investici. Zrychlené odpisy ji zkracují." />
           <KPI label="IRR" value={R.irr} unit="%" color={R.irr >= 8 ? C.green : C.accentBright} sub="vnitřní výnos. procento"
             info="IRR (Internal Rate of Return) = roční výnosnost projektu po dani. Čím vyšší, tím lépe; porovnává se s cenou kapitálu (WACC 5 %)." />
@@ -485,8 +490,8 @@ export default function App() {
             info="Peak shaving = snížení odebíraného špičkového výkonu z baterie/FVE, čímž klesá platba za rezervovaný příkon." />
           <KPI label="Roční Cash Flow" value={fmt(R.y1?.cf)} unit="Kč" color={R.y1?.cf > 0 ? C.green : C.red} sub="po dani, rok 1"
             info="Čistý roční peněžní tok v 1. roce po zdanění (výnosy − náklady − daň). Zrychlené odpisy daň v prvních letech snižují." />
-          <KPI label="25-letý Cash Flow" value={fmt(R.totalCF25)} unit="Kč" color={R.totalCF25 > 0 ? C.green : C.red} sub="kumulativní po dani"
-            info="Souhrnný čistý peněžní tok za 25 let provozu po zdanění, po odečtení investice a výměny baterie." />
+          <KPI label="30-letý Cash Flow" value={fmt(R.totalCF25)} unit="Kč" color={R.totalCF25 > 0 ? C.green : C.red} sub="kumulativní po dani"
+            info="Souhrnný čistý peněžní tok za 30 let provozu po zdanění, po odečtení investice a výměn baterie." />
         </div>
 
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -593,7 +598,7 @@ export default function App() {
                       <div><span style={{color: C.dim}}>Daň. štít rok 1:</span> <b style={{color: C.green}}>{fmtCZK(R.taxShieldY1)}</b></div>
                       <div><span style={{color: C.dim}}>NPV (po dani):</span> <b style={{color: R.npv >= 0 ? C.green : C.red}}>{fmtCZK(R.npv)}</b></div>
                       <div><span style={{color: C.dim}}>IRR:</span> <b style={{color: C.accentBright}}>{R.irr} %</b></div>
-                      <div><span style={{color: C.dim}}>Návratnost po dani:</span> <b style={{color: C.purple}}>{R.pbp || ">25"} let</b></div>
+                      <div><span style={{color: C.dim}}>Návratnost po dani:</span> <b style={{color: C.purple}}>{R.pbp || ">30"} let</b></div>
                       <div><span style={{color: C.dim}}>Daň. štít 25 let:</span> <b style={{color: C.green}}>{fmtCZK(R.taxShield25)}</b></div>
                     </div>
                     <div style={{ fontSize: 9, color: C.dim, marginTop: 6 }}>
@@ -635,7 +640,9 @@ export default function App() {
                     <Legend wrapperStyle={{fontSize:10}} />
                     <ReferenceLine y={0} stroke={C.dim} strokeWidth={2} />
                     {R.pbp && <ReferenceLine x={R.pbp} stroke={C.green} strokeDasharray="5 5" label={{value:`Návratnost: ${R.pbp} let`,fill:C.green,fontSize:10,position:"top"}} />}
-                    {I.bessKwh > 0 && <ReferenceLine x={batteryParams.bessReplYear} stroke={C.red} strokeDasharray="3 3" label={{value:"Výměna baterie",fill:C.red,fontSize:9,position:"bottom"}} />}
+                    {I.bessKwh > 0 && Array.from({length: Math.max(0, Math.ceil(LIFETIME / batteryParams.bessReplYear) - 1)}, (_, i) => (i + 1) * batteryParams.bessReplYear).filter(yr => yr < LIFETIME).map(yr => (
+                      <ReferenceLine key={yr} x={yr} stroke={C.red} strokeDasharray="3 3" label={{value:"Výměna baterie",fill:C.red,fontSize:9,position:"bottom"}} />
+                    ))}
                     <Bar dataKey="cf" name="Roční Cash Flow (po dani)" fill={C.blue} opacity={0.35} radius={[2,2,0,0]} />
                     <Line dataKey="cumCF" name="Kumulativní CF (po dani)" stroke={C.accentBright} strokeWidth={2.5} dot={false} />
                   </ComposedChart>
@@ -676,10 +683,10 @@ export default function App() {
                     <XAxis dataKey="label" stroke={C.dim} fontSize={10} tickLine={false} />
                     <YAxis yAxisId="cf" stroke={C.dim} fontSize={9} tickFormatter={v=>`${(v/1e6).toFixed(1)}M`} tickLine={false} />
                     <YAxis yAxisId="pbp" orientation="right" stroke={C.dim} fontSize={9} label={{value:"Návratnost (let)",angle:90,position:"insideRight",fill:C.dim,fontSize:9}} tickLine={false} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v,name) => [name==="25-letý Cash Flow" ? fmtCZK(v) : `${v} let`, name]} labelFormatter={l=>`Cena elektřiny ${l}`} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v,name) => [name==="30-letý Cash Flow" ? fmtCZK(v) : `${v} let`, name]} labelFormatter={l=>`Cena elektřiny ${l}`} />
                     <Legend wrapperStyle={{fontSize:10}} />
                     <ReferenceLine yAxisId="cf" y={0} stroke={C.dim} strokeWidth={2} />
-                    <Bar yAxisId="cf" dataKey="cumCF" name="25-letý Cash Flow">
+                    <Bar yAxisId="cf" dataKey="cumCF" name="30-letý Cash Flow">
                       {R.sensitivity.map((e,i) => <Cell key={i} fill={e.cumCF>=0?C.green:C.red} opacity={0.6} radius={[3,3,0,0]} />)}
                     </Bar>
                     <Line yAxisId="pbp" dataKey="pbp" name="Návratnost" stroke={C.purple} strokeWidth={2} dot={{r:3,fill:C.purple}} />
@@ -797,8 +804,8 @@ export default function App() {
                   {[
                     { t: "CYKLIČNOST", items: [`${R.dailyCyc} cyklů/den`, `${R.annCyc} cyklů/rok`, `Životnost: ${R.bessLife} let`], c: C.purple },
                     { t: "PEAK SHAVING", items: [`Ořez špičky: −${R.y1?.peakKw} kW`, `Roční úspora: ${fmtCZK(R.y1?.peak)}`, `Baterie vybíjení ve špičkách 7–18h`], c: C.purple },
-                    { t: "DEGRADACE", items: [`Rok 1: ${R.y1?.bessDeg}% kapacity`, `Rok 10: ~${Math.max(70, 100-20)}%`, `Lineární 2%/rok`], c: C.cyan },
-                    { t: "VÝMĚNA", items: [`Rok ${batteryParams.bessReplYear}: ${fmtCZK(batteryParams.bessReplCost)}`, `Cena −10%/rok → ${fmt(batteryParams.pricePerKwhAtRepl)} Kč/kWh`, `Nová baterie → reset degradace`], c: C.accentBright },
+                    { t: "DEGRADACE", items: [`Rok 1: ${R.y1?.bessDeg}% kapacity`, `Před výměnou: ~${Math.round(Math.max(0.7, 1 - 0.02*(batteryParams.bessReplYear-1))*100)}%`, `Lineární 2%/rok, reset po výměně`], c: C.cyan },
+                    { t: "VÝMĚNA", items: [`Každých ${batteryParams.bessReplYear} let (1. ${fmtCZK(batteryParams.bessReplCost)})`, `Cena −10%/rok → ${fmt(batteryParams.pricePerKwhAtRepl)} Kč/kWh v r. ${batteryParams.bessReplYear}`, `Nová baterie → reset degradace`], c: C.accentBright },
                   ].map(box => (
                     <div key={box.t} style={{ background: C.bg, borderRadius: 6, padding: 10, borderLeft: `3px solid ${box.c}` }}>
                       <div style={{ fontSize: 9, fontWeight: 700, color: box.c, textTransform: "uppercase", marginBottom: 6, letterSpacing: "0.5px" }}>{box.t}</div>
@@ -844,7 +851,7 @@ export default function App() {
         </div>
 
         <div style={{ textAlign:"center", marginTop:20, fontSize:9, color:C.dim, fontFamily:font }}>
-          ENERGO GROUP · Kalkulátor pro firemní instalace FVE + Baterie v3.1 · Orientační výpočet · Skutečné hodnoty závisí na konkrétních podmínkách projektu · www.energogroup.cz
+          ENERGO GROUP · Kalkulátor pro firemní instalace FVE + Baterie v3.2 · Orientační výpočet · Skutečné hodnoty závisí na konkrétních podmínkách projektu · www.energogroup.cz
         </div>
       </div>
     </div>
