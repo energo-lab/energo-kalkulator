@@ -359,6 +359,7 @@ const tooltipStyle = { background: "#ffffff", border: "1px solid #dce3ec", borde
    ══════════════════════════════════════════════════ */
 export default function App() {
   const [I, setI] = useState({
+    customer: "",
     capex: 3000000, subsidy: 1000000, trafo: 200000,
     pvKwp: 100, bessKwh: 100, orient: "eastwest",
     annualMwh: 400, wdRatio: 0.75,
@@ -467,15 +468,24 @@ export default function App() {
         {/* ═══ HLAVIČKA JEN PRO TISK/PDF ═══ */}
         <div className="print-only" style={{ marginBottom: 16, paddingBottom: 10, borderBottom: `2px solid ${C.accent}` }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.white }}>ENERGO GROUP — Orientační návrh FVE + Baterie</div>
+          {I.customer && <div style={{ fontSize: 14, fontWeight: 700, color: C.accent, marginTop: 4 }}>Cenová nabídka pro: {I.customer}</div>}
           <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
             FVE {I.pvKwp} kWp · Baterie {I.bessKwh} kWh · Roční odběr {I.annualMwh} MWh · Vygenerováno {new Date().toLocaleDateString("cs-CZ")}
           </div>
         </div>
 
-        {/* ═══ EXPORT / TISK ═══ */}
-        <div className="no-print" style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => window.print()} title="Otevře dialog tisku" style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:6, border:`1px solid ${C.border}`, background:C.card, color:C.text, fontSize:12, fontWeight:600, fontFamily:fontSans, cursor:"pointer", boxShadow:"0 1px 2px rgba(15,23,42,0.05)" }}>🖨️ Tisk</button>
-          <button onClick={() => window.print()} title="V dialogu zvolte cíl „Uložit jako PDF“" style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:6, border:"none", background:C.accent, color:"#fff", fontSize:12, fontWeight:600, fontFamily:fontSans, cursor:"pointer", boxShadow:"0 1px 3px rgba(194,116,10,0.4)" }}>📄 Export do PDF</button>
+        {/* ═══ ZÁKAZNÍK + EXPORT / TISK ═══ */}
+        <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>Cenová nabídka pro:</span>
+            <input value={I.customer} onChange={e => s("customer", e.target.value)} placeholder="Jméno zákazníka / společnosti"
+              style={{ minWidth: 260, padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.white, fontSize: 14, fontWeight: 600, fontFamily: fontSans, outline: "none" }}
+              onFocus={e => e.target.style.borderColor = C.accent} onBlur={e => e.target.style.borderColor = C.border} />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => window.print()} title="Otevře dialog tisku" style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:6, border:`1px solid ${C.border}`, background:C.card, color:C.text, fontSize:12, fontWeight:600, fontFamily:fontSans, cursor:"pointer", boxShadow:"0 1px 2px rgba(15,23,42,0.05)" }}>🖨️ Tisk</button>
+            <button onClick={() => window.print()} title="V dialogu zvolte cíl „Uložit jako PDF“" style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:6, border:"none", background:C.accent, color:"#fff", fontSize:12, fontWeight:600, fontFamily:fontSans, cursor:"pointer", boxShadow:"0 2px 5px rgba(232,97,42,0.35)" }}>📄 Export do PDF</button>
+          </div>
         </div>
 
         {/* ═══ KPI ROW ═══ */}
@@ -494,6 +504,35 @@ export default function App() {
             info="Čistý roční peněžní tok v 1. roce po zdanění (výnosy − náklady − daň). Zrychlené odpisy daň v prvních letech snižují." />
           <KPI label="30-letý Cash Flow" value={fmt(R.totalCF25)} unit="Kč" color={R.totalCF25 > 0 ? C.green : C.red} sub="kumulativní po dani"
             info="Souhrnný čistý peněžní tok za 30 let provozu po zdanění, po odečtení investice a výměn baterie." />
+        </div>
+
+        {/* ═══ HODNOTA NAD RÁMEC NÁVRATNOSTI (tiskne se pro zákazníka) ═══ */}
+        <div style={{ background: "linear-gradient(135deg, #ffffff 0%, #f1f6fb 100%)", border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.accent}`, borderRadius: 10, padding: "16px 18px", marginBottom: 14, boxShadow: "0 1px 3px rgba(15,23,42,0.05)" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.white, marginBottom: 6 }}>💡 Návratnost není jediný přínos</div>
+          <div style={{ fontSize: 12, color: C.text, lineHeight: 1.55, marginBottom: 12, maxWidth: 1040 }}>
+            U fotovoltaiky s baterií se nelze dívat jen na prostou návratnost. Stejně důležitá je <b>částečná energetická soběstačnost</b>, <b>záložní napájení při výpadku sítě</b> a <b>ochrana před růstem cen energií</b> — přínosy, které se těžko vyčíslí, ale pro plynulý provoz a stabilitu firmy mají zásadní hodnotu. Systém vás chrání i v situacích, kdy se na samotná čísla spolehnout nedá.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(195px, 1fr))", gap: 8 }}>
+            {[
+              ["🔋", "Záložní napájení", "Klíčové provozy běží dál i při výpadku distribuční sítě."],
+              ["🏭", "Soběstačnost", "Vyrábíte a spotřebováváte vlastní energii — méně závislosti na trhu."],
+              ["📈", "Ochrana před cenami", "Fixujete část nákladů na energii proti budoucímu zdražování."],
+              ["⚙️", "Vysoká účinnost systému", "LFP baterie s účinností 92 %, kvalitní komponenty a chytrý EMS."],
+              ["⚡", "Peak shaving", "Nižší platby za rezervovaný příkon díky ořezání špiček."],
+              ["🌱", "Zelená energie & ESG", "Nižší uhlíková stopa a lepší ESG profil vaší firmy."],
+            ].map(([ic, t, d]) => (
+              <div key={t} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 11px" }}>
+                <span style={{ fontSize: 18, lineHeight: 1 }}>{ic}</span>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.white }}>{t}</div>
+                  <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.4, marginTop: 1 }}>{d}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+            <b style={{ color: C.accent }}>ENERGO GROUP</b> — návrh, instalace i servis na klíč. Kvalitní komponenty, dlouhá životnost, průběžný monitoring a odborná podpora po celou dobu provozu.
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
