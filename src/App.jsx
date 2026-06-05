@@ -491,7 +491,7 @@ export default function App() {
         {/* ═══ KPI ROW ═══ */}
         <div className="kpi-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
           <KPI label="Čistý CAPEX" value={fmt(R.netCapex)} unit="Kč" color={C.accent} sub={`Dotace ${fmt(I.subsidy)} Kč`}
-            info="CAPEX (Capital Expenditure) = celková investice. Čistý CAPEX = investice + úprava trafostanice − dotace." />
+            info="CAPEX (Capital Expenditure) = celková investice. Čistý CAPEX = investice + úprava připojného místa − dotace." />
           <KPI label="Návratnost" value={R.pbp || ">30"} unit="let" color={R.pbp && R.pbp <= 8 ? C.green : R.pbp ? C.accentBright : C.red} sub="po zdanění, vč. odpisů"
             info="Doba, za kterou kumulovaný čistý peněžní tok po zdanění (včetně daňového štítu z odpisů) pokryje investici. Zrychlené odpisy ji zkracují." />
           <KPI label="IRR" value={R.irr} unit="%" color={R.irr >= 8 ? C.green : C.accentBright} sub="vnitřní výnos. procento"
@@ -558,7 +558,7 @@ export default function App() {
                 {tab === "invest" && <>
                   <Inp label="Celkový CAPEX" value={I.capex} onChange={v => s("capex",v)} unit="Kč" step={100000} hint="FVE + Baterie + montáž + projektová dokumentace" />
                   <Inp label="Dotace" value={I.subsidy} onChange={v => s("subsidy",v)} unit="Kč" step={100000} hint="Modernizační fond, OPTAK, MPO" />
-                  <Inp label="Úprava trafostanice" value={I.trafo} onChange={v => s("trafo",v)} unit="Kč" step={50000} hint="Rozvodny, přípojky, fázové měření" />
+                  <Inp label="Úprava připojného místa" value={I.trafo} onChange={v => s("trafo",v)} unit="Kč" step={50000} hint="Rozvodny, přípojky, trafostanice, fázové měření" />
                   <div style={{ background: C.bg, borderRadius: 6, padding: 10, marginTop: 8 }}>
                     <div style={{ fontSize: 10, color: C.muted, fontFamily: fontSans }}>Čistý CAPEX</div>
                     <div style={{ fontSize: 20, fontWeight: 700, color: C.accentBright, fontFamily: font }}>{fmtCZK(R.netCapex)}</div>
@@ -868,7 +868,7 @@ export default function App() {
             <ChartCard title="Vysvětlivky pojmů" icon="📖">
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
                 {[
-                  ["CAPEX", "Celková investiční částka (Capital Expenditure) – FVE, baterie, montáž, projekt. Čistý CAPEX = CAPEX + trafostanice − dotace."],
+                  ["CAPEX", "Celková investiční částka (Capital Expenditure) – FVE, baterie, montáž, projekt. Čistý CAPEX = CAPEX + úprava připojného místa − dotace."],
                   ["OPEX", "Provozní náklady (Operating Expenditure) – servis, údržba, monitoring; zde jako % z CAPEX ročně."],
                   ["LCOE", "Levelized Cost of Energy – průměrné náklady na 1 MWh vlastní elektřiny za celou životnost. Pod cenou nákupu = úspora."],
                   ["NPV", "Čistá současná hodnota – součet budoucích peněžních toků diskontovaných na dnešek (WACC 5 %). Kladná = projekt vydělává."],
