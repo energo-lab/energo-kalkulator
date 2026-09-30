@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, BarChart, Bar, ComposedChart, Area, ReferenceLine, Cell,
@@ -355,23 +355,75 @@ function ChartCard({ children, title, icon, extra }) {
 const tooltipStyle = { background: "#ffffff", border: "1px solid #dce3ec", borderRadius: 6, fontSize: 11, fontFamily: font, color: "#334155", boxShadow: "0 4px 14px rgba(15,23,42,0.12)" };
 
 /* ══════════════════════════════════════════════════
+   PERZISTENCE (localStorage): rozpracovaná nabídka + archiv
+   Přežije zavření okna i restart počítače. Platí pro tento
+   prohlížeč na tomto počítači (bez backendu).
+   ══════════════════════════════════════════════════ */
+const LS_DRAFT = "energo-kalkulator:draft";
+const LS_OFFERS = "energo-kalkulator:offers";
+const DEFAULTS = {
+  customer: "",
+  capex: 3000000, subsidy: 1000000, trafo: 200000,
+  pvKwp: 100, bessKwh: 100, orient: "eastwest",
+  annualMwh: 400, wdRatio: 0.75,
+  elPrice: 2900, distrib: 500, resCapFee: 180000, feedIn: 1400,
+  opex: 1.5, insurance: 0.3,
+  spotSpread: 1800, arbCycles: 0.5,
+  deprMethod: "accelerated", deprYears: 10,
+};
+function lsGet(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* soukromý režim / plné úložiště – tiše ignoruj */ }
+}
+// Sloučí uložená data s výchozími, aby položky přidané v novějších verzích nechyběly
+const withDefaults = d => (d && typeof d === "object") ? { ...DEFAULTS, ...d } : { ...DEFAULTS };
+const fmtDate = ts => new Date(ts).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const plural = (n, a, b, c) => n === 1 ? a : (n >= 2 && n <= 4) ? b : c;
+const btnSec = { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, fontWeight: 600, fontFamily: fontSans, cursor: "pointer", boxShadow: "0 1px 2px rgba(15,23,42,0.05)", whiteSpace: "nowrap" };
+
+/* ══════════════════════════════════════════════════
    MAIN APP
    ══════════════════════════════════════════════════ */
 export default function App() {
-  const [I, setI] = useState({
-    customer: "",
-    capex: 3000000, subsidy: 1000000, trafo: 200000,
-    pvKwp: 100, bessKwh: 100, orient: "eastwest",
-    annualMwh: 400, wdRatio: 0.75,
-    elPrice: 2900, distrib: 500, resCapFee: 180000, feedIn: 1400,
-    opex: 1.5, insurance: 0.3,
-    spotSpread: 1800, arbCycles: 0.5,
-    deprMethod: "accelerated", deprYears: 10,
-  });
+  // Při startu obnoví rozpracovanou nabídku z úložiště prohlížeče (jinak výchozí hodnoty)
+  const [I, setI] = useState(() => withDefaults(lsGet(LS_DRAFT, null)?.data));
+  const [draftSavedAt, setDraftSavedAt] = useState(() => lsGet(LS_DRAFT, null)?.savedAt || null);
 
   const [tab, setTab] = useState("tech");
   const [chart, setChart] = useState("cashflow");
   const s = useCallback((k, v) => setI(p => ({ ...p, [k]: v })), []);
+
+  // Automatické průběžné ukládání rozpracované nabídky při každé změně
+  useEffect(() => {
+    const savedAt = Date.now();
+    lsSet(LS_DRAFT, { data: I, savedAt });
+    setDraftSavedAt(savedAt);
+  }, [I]);
+
+  // Archiv pojmenovaných nabídek
+  const [offers, setOffers] = useState(() => { const o = lsGet(LS_OFFERS, []); return Array.isArray(o) ? o : []; });
+  const [showArchive, setShowArchive] = useState(false);
+  useEffect(() => { lsSet(LS_OFFERS, offers); }, [offers]);
+
+  const saveOffer = useCallback(() => {
+    const defName = `${I.customer || "Nabídka"} – ${I.pvKwp} kWp / ${I.bessKwh} kWh`;
+    const name = window.prompt("Název nabídky pro archiv:", defName);
+    if (name === null) return; // zrušeno
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setOffers(p => [{ id, name: name.trim() || defName, customer: I.customer, savedAt: Date.now(), data: I }, ...p]);
+    setShowArchive(true);
+  }, [I]);
+  const loadOffer = useCallback(o => { setI(withDefaults(o.data)); setShowArchive(false); window.scrollTo({ top: 0, behavior: "smooth" }); }, []);
+  const deleteOffer = useCallback(o => {
+    if (!window.confirm(`Smazat nabídku „${o.name}“ z archivu?`)) return;
+    setOffers(p => p.filter(x => x.id !== o.id));
+  }, []);
+  const newOffer = useCallback(() => {
+    if (!window.confirm("Začít novou nabídku? Rozpracovaná bude nahrazena výchozími hodnotami (archiv zůstane zachován).")) return;
+    setI({ ...DEFAULTS });
+  }, []);
 
   // Auto-calculated battery parameters (industry averages for LFP)
   const batteryParams = useMemo(() => {
@@ -474,19 +526,62 @@ export default function App() {
           </div>
         </div>
 
-        {/* ═══ ZÁKAZNÍK + EXPORT / TISK ═══ */}
+        {/* ═══ ZÁKAZNÍK + ARCHIV + EXPORT / TISK ═══ */}
         <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>Zákazník</span>
             <input value={I.customer} onChange={e => s("customer", e.target.value)} placeholder="Jméno zákazníka / společnosti"
               style={{ minWidth: 260, padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.white, fontSize: 14, fontWeight: 600, fontFamily: fontSans, outline: "none" }}
               onFocus={e => e.target.style.borderColor = C.accent} onBlur={e => e.target.style.borderColor = C.border} />
+            <button onClick={saveOffer} title="Uloží aktuální nabídku pod názvem do archivu" style={btnSec}>💾 Uložit do archivu</button>
+            <button onClick={() => setShowArchive(v => !v)} title="Otevřít / zavřít archiv uložených nabídek" style={{ ...btnSec, borderColor: showArchive ? C.accent : C.border, color: showArchive ? C.accent : C.text }}>📂 Archiv ({offers.length})</button>
+            <button onClick={newOffer} title="Nová nabídka z výchozích hodnot" style={btnSec}>🆕 Nová</button>
+            {draftSavedAt && <span style={{ fontSize: 10, color: C.muted, whiteSpace: "nowrap" }}>✓ Rozpracovaná nabídka automaticky uložena {fmtDate(draftSavedAt)}</span>}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => window.print()} title="Otevře dialog tisku" style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:6, border:`1px solid ${C.border}`, background:C.card, color:C.text, fontSize:12, fontWeight:600, fontFamily:fontSans, cursor:"pointer", boxShadow:"0 1px 2px rgba(15,23,42,0.05)" }}>🖨️ Tisk</button>
             <button onClick={() => window.print()} title="V dialogu zvolte cíl „Uložit jako PDF“" style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:6, border:"none", background:C.accent, color:"#fff", fontSize:12, fontWeight:600, fontFamily:fontSans, cursor:"pointer", boxShadow:"0 2px 5px rgba(232,97,42,0.35)" }}>📄 Export do PDF</button>
           </div>
         </div>
+
+        {/* ═══ ARCHIV NABÍDEK ═══ */}
+        {showArchive && (
+          <div className="no-print" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14, boxShadow: "0 1px 3px rgba(15,23,42,0.05)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.white }}>📂 Archiv nabídek</span>
+              <span style={{ fontSize: 10, color: C.muted }}>{offers.length} {plural(offers.length, "nabídka", "nabídky", "nabídek")} · uloženo v tomto prohlížeči na tomto počítači</span>
+            </div>
+            {offers.length === 0 ? (
+              <div style={{ fontSize: 12, color: C.muted, padding: "6px 0" }}>Archiv je zatím prázdný. Rozpracovanou nabídku uložíte tlačítkem „💾 Uložit do archivu“.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                      {["Název", "Zákazník", "FVE / Baterie", "Uloženo", ""].map((h, i) => (
+                        <th key={i} style={{ textAlign: "left", padding: "6px 8px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {offers.map(o => (
+                      <tr key={o.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: "8px", fontWeight: 600, color: C.white }}>{o.name}</td>
+                        <td style={{ padding: "8px", color: C.text }}>{o.customer || "—"}</td>
+                        <td style={{ padding: "8px", color: C.text, fontFamily: font, whiteSpace: "nowrap" }}>{o.data?.pvKwp} kWp / {o.data?.bessKwh} kWh</td>
+                        <td style={{ padding: "8px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(o.savedAt)}</td>
+                        <td style={{ padding: "8px", textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button onClick={() => loadOffer(o)} title="Načte nabídku do kalkulačky" style={{ ...btnSec, display: "inline-flex", padding: "5px 10px", marginRight: 6, background: C.accent, color: "#fff", border: "none" }}>Načíst</button>
+                          <button onClick={() => deleteOffer(o)} title="Odstraní nabídku z archivu" style={{ ...btnSec, display: "inline-flex", padding: "5px 10px", color: C.red }}>Smazat</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ═══ KPI ROW ═══ */}
         <div className="kpi-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
@@ -893,7 +988,7 @@ export default function App() {
         </div>
 
         <div style={{ textAlign:"center", marginTop:20, fontSize:9, color:C.dim, fontFamily:font }}>
-          ENERGO GROUP · Kalkulátor pro firemní instalace FVE + Baterie v3.3 · Orientační výpočet · Skutečné hodnoty závisí na konkrétních podmínkách projektu · www.energogroup.cz
+          ENERGO GROUP · Kalkulátor pro firemní instalace FVE + Baterie v3.4 · Orientační výpočet · Skutečné hodnoty závisí na konkrétních podmínkách projektu · www.energogroup.cz
         </div>
       </div>
     </div>
