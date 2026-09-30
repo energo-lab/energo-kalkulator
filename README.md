@@ -85,3 +85,25 @@ Stačí přidat CNAME záznam v DNS vašeho hostingu.
 - Vite 5
 - Recharts (grafy)
 - Žádný backend – vše běží v prohlížeči klienta
+
+---
+
+## Sdílený archiv nabídek (Supabase)
+
+Rozpracovaná nabídka se ukládá automaticky v prohlížeči. **Uložené nabídky** jdou do sdíleného archivu v Supabase, takže je vidí celý tým z jakéhokoli počítače.
+
+### 1. Databáze
+V Supabase otevřete **SQL Editor → New query**, vložte obsah `supabase/schema.sql` a spusťte. Vytvoří tabulku `public.offers` s RLS (přístup jen pro přihlášené).
+
+### 2. Proměnné prostředí
+Ve Vercelu (**Settings → Environment Variables**) nastavte a poté spusťte **Redeploy**:
+
+| Proměnná | Kde ji najít |
+|---|---|
+| `VITE_SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase → Project Settings → API → `anon` `public` key |
+
+Lokálně stejné hodnoty do `.env.local` (viz `.env.example`). Nikdy nepoužívejte `service_role` key v aplikaci.
+
+### 3. Uživatelské účty
+Obchodníkům zakládá účty správce: Supabase → **Authentication → Users → Add user → Create new user** (e-mail + heslo, zaškrtnout *Auto Confirm User*). V aplikaci se přihlásí tlačítkem **Archiv**.

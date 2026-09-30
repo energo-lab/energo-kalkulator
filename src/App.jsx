@@ -3,6 +3,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, BarChart, Bar, ComposedChart, Area, ReferenceLine, Cell,
 } from "recharts";
+import { supabase } from "./supabase";
 
 /* ══════════════════════════════════════════════════
    CONSTANTS & HELPERS
@@ -359,8 +360,7 @@ const tooltipStyle = { background: "#ffffff", border: "1px solid #dce3ec", borde
    Přežije zavření okna i restart počítače. Platí pro tento
    prohlížeč na tomto počítači (bez backendu).
    ══════════════════════════════════════════════════ */
-const LS_DRAFT = "energo-kalkulator:draft";
-const LS_OFFERS = "energo-kalkulator:offers";
+const LS_DRAFT = "energo-kalkulator:draft"; // rozpracovaná nabídka zůstává lokálně; archiv je sdílený v Supabase
 const DEFAULTS = {
   customer: "",
   capex: 3000000, subsidy: 1000000, trafo: 200000,
@@ -382,6 +382,7 @@ const withDefaults = d => (d && typeof d === "object") ? { ...DEFAULTS, ...d } :
 const fmtDate = ts => new Date(ts).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
 const plural = (n, a, b, c) => n === 1 ? a : (n >= 2 && n <= 4) ? b : c;
 const btnSec = { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, fontWeight: 600, fontFamily: fontSans, cursor: "pointer", boxShadow: "0 1px 2px rgba(15,23,42,0.05)", whiteSpace: "nowrap" };
+const fieldSty = { padding: "8px 12px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, color: C.white, fontSize: 13, fontFamily: fontSans, outline: "none" };
 
 /* ══════════════════════════════════════════════════
    MAIN APP
@@ -390,6 +391,7 @@ export default function App() {
   // Při startu obnoví rozpracovanou nabídku z úložiště prohlížeče (jinak výchozí hodnoty)
   const [I, setI] = useState(() => withDefaults(lsGet(LS_DRAFT, null)?.data));
   const [draftSavedAt, setDraftSavedAt] = useState(() => lsGet(LS_DRAFT, null)?.savedAt || null);
+  const [loadedOffer, setLoadedOffer] = useState(() => lsGet(LS_DRAFT, null)?.loadedOffer || null); // { id, name } nabídky načtené z archivu
 
   const [tab, setTab] = useState("tech");
   const [chart, setChart] = useState("cashflow");
@@ -398,31 +400,81 @@ export default function App() {
   // Automatické průběžné ukládání rozpracované nabídky při každé změně
   useEffect(() => {
     const savedAt = Date.now();
-    lsSet(LS_DRAFT, { data: I, savedAt });
+    lsSet(LS_DRAFT, { data: I, savedAt, loadedOffer });
     setDraftSavedAt(savedAt);
-  }, [I]);
+  }, [I, loadedOffer]);
 
-  // Archiv pojmenovaných nabídek
-  const [offers, setOffers] = useState(() => { const o = lsGet(LS_OFFERS, []); return Array.isArray(o) ? o : []; });
-  const [showArchive, setShowArchive] = useState(false);
-  useEffect(() => { lsSet(LS_OFFERS, offers); }, [offers]);
-
-  const saveOffer = useCallback(() => {
-    const defName = `${I.customer || "Nabídka"} – ${I.pvKwp} kWp / ${I.bessKwh} kWh`;
-    const name = window.prompt("Název nabídky pro archiv:", defName);
-    if (name === null) return; // zrušeno
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setOffers(p => [{ id, name: name.trim() || defName, customer: I.customer, savedAt: Date.now(), data: I }, ...p]);
-    setShowArchive(true);
-  }, [I]);
-  const loadOffer = useCallback(o => { setI(withDefaults(o.data)); setShowArchive(false); window.scrollTo({ top: 0, behavior: "smooth" }); }, []);
-  const deleteOffer = useCallback(o => {
-    if (!window.confirm(`Smazat nabídku „${o.name}“ z archivu?`)) return;
-    setOffers(p => p.filter(x => x.id !== o.id));
+  // ── Přihlášení (Supabase Auth, e-mail + heslo). Účty zakládá správce v Supabase. ──
+  const [session, setSession] = useState(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPass, setLoginPass] = useState("");
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
   }, []);
+  const login = useCallback(async e => {
+    e.preventDefault();
+    setAuthBusy(true); setAuthError("");
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPass });
+    if (error) setAuthError("Přihlášení se nezdařilo – zkontrolujte e-mail a heslo.");
+    else setLoginPass("");
+    setAuthBusy(false);
+  }, [loginEmail, loginPass]);
+  const logout = useCallback(() => { supabase?.auth.signOut(); setLoadedOffer(null); }, []);
+
+  // ── Sdílený archiv nabídek (tabulka public.offers v Supabase, přístup hlídá RLS) ──
+  const [offers, setOffers] = useState([]);
+  const [offersBusy, setOffersBusy] = useState(false);
+  const [offersError, setOffersError] = useState("");
+  const [showArchive, setShowArchive] = useState(false);
+  const fetchOffers = useCallback(async () => {
+    if (!supabase || !session) { setOffers([]); return; }
+    setOffersBusy(true); setOffersError("");
+    const { data, error } = await supabase.from("offers")
+      .select("id,name,customer,data,created_by_email,created_at,updated_at")
+      .order("updated_at", { ascending: false });
+    if (error) setOffersError("Archiv se nepodařilo načíst."); else setOffers(data || []);
+    setOffersBusy(false);
+  }, [session]);
+  useEffect(() => { fetchOffers(); }, [fetchOffers]);
+
+  const saveOffer = useCallback(async () => {
+    if (!session) { setShowArchive(true); return; } // nejdřív přihlášení
+    setOffersError("");
+    const defName = `${I.customer || "Nabídka"} – ${I.pvKwp} kWp / ${I.bessKwh} kWh`;
+    if (loadedOffer && window.confirm(`Přepsat uloženou nabídku „${loadedOffer.name}“?\n\nOK = přepsat změnami, Zrušit = uložit jako novou nabídku.`)) {
+      const { error } = await supabase.from("offers").update({ customer: I.customer, data: I }).eq("id", loadedOffer.id);
+      if (error) { setOffersError("Uložení se nezdařilo."); return; }
+    } else {
+      const name = window.prompt("Název nabídky pro archiv:", defName);
+      if (name === null) return; // zrušeno
+      const { data, error } = await supabase.from("offers")
+        .insert({ name: name.trim() || defName, customer: I.customer, data: I, created_by_email: session.user.email })
+        .select("id,name").single();
+      if (error) { setOffersError("Uložení se nezdařilo."); return; }
+      setLoadedOffer(data);
+    }
+    await fetchOffers();
+    setShowArchive(true);
+  }, [I, session, loadedOffer, fetchOffers]);
+  const loadOffer = useCallback(o => {
+    setI(withDefaults(o.data)); setLoadedOffer({ id: o.id, name: o.name });
+    setShowArchive(false); window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+  const deleteOffer = useCallback(async o => {
+    if (!window.confirm(`Smazat nabídku „${o.name}“ ze sdíleného archivu?`)) return;
+    const { error } = await supabase.from("offers").delete().eq("id", o.id);
+    if (error) { setOffersError("Smazání se nezdařilo."); return; }
+    if (loadedOffer?.id === o.id) setLoadedOffer(null);
+    await fetchOffers();
+  }, [loadedOffer, fetchOffers]);
   const newOffer = useCallback(() => {
     if (!window.confirm("Začít novou nabídku? Rozpracovaná bude nahrazena výchozími hodnotami (archiv zůstane zachován).")) return;
-    setI({ ...DEFAULTS });
+    setI({ ...DEFAULTS }); setLoadedOffer(null);
   }, []);
 
   // Auto-calculated battery parameters (industry averages for LFP)
@@ -533,9 +585,13 @@ export default function App() {
             <input value={I.customer} onChange={e => s("customer", e.target.value)} placeholder="Jméno zákazníka / společnosti"
               style={{ minWidth: 260, padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.white, fontSize: 14, fontWeight: 600, fontFamily: fontSans, outline: "none" }}
               onFocus={e => e.target.style.borderColor = C.accent} onBlur={e => e.target.style.borderColor = C.border} />
-            <button onClick={saveOffer} title="Uloží aktuální nabídku pod názvem do archivu" style={btnSec}>💾 Uložit do archivu</button>
-            <button onClick={() => setShowArchive(v => !v)} title="Otevřít / zavřít archiv uložených nabídek" style={{ ...btnSec, borderColor: showArchive ? C.accent : C.border, color: showArchive ? C.accent : C.text }}>📂 Archiv ({offers.length})</button>
+            <button onClick={saveOffer} title={loadedOffer ? `Uloží změny do „${loadedOffer.name}“, nebo jako novou nabídku` : "Uloží aktuální nabídku pod názvem do sdíleného archivu"} style={btnSec}>💾 {loadedOffer ? "Uložit" : "Uložit do archivu"}</button>
+            <button onClick={() => setShowArchive(v => !v)} title="Otevřít / zavřít sdílený archiv nabídek" style={{ ...btnSec, borderColor: showArchive ? C.accent : C.border, color: showArchive ? C.accent : C.text }}>📂 Archiv{session ? ` (${offers.length})` : ""}</button>
             <button onClick={newOffer} title="Nová nabídka z výchozích hodnot" style={btnSec}>🆕 Nová</button>
+            {session
+              ? <span style={{ fontSize: 10, color: C.muted, whiteSpace: "nowrap" }}>👤 {session.user.email} · <a href="#" onClick={e => { e.preventDefault(); logout(); }} style={{ color: C.accent }}>odhlásit</a></span>
+              : <span style={{ fontSize: 10, color: C.muted, whiteSpace: "nowrap" }}>🔒 Pro sdílený archiv se přihlaste (tlačítko Archiv)</span>}
+            {loadedOffer && <span style={{ fontSize: 10, color: C.blue, whiteSpace: "nowrap" }}>📄 Načteno: {loadedOffer.name}</span>}
             {draftSavedAt && <span style={{ fontSize: 10, color: C.muted, whiteSpace: "nowrap" }}>✓ Rozpracovaná nabídka automaticky uložena {fmtDate(draftSavedAt)}</span>}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -548,37 +604,54 @@ export default function App() {
         {showArchive && (
           <div className="no-print" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14, boxShadow: "0 1px 3px rgba(15,23,42,0.05)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.white }}>📂 Archiv nabídek</span>
-              <span style={{ fontSize: 10, color: C.muted }}>{offers.length} {plural(offers.length, "nabídka", "nabídky", "nabídek")} · uloženo v tomto prohlížeči na tomto počítači</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.white }}>📂 Sdílený archiv nabídek</span>
+              {session && <span style={{ fontSize: 10, color: C.muted }}>{offers.length} {plural(offers.length, "nabídka", "nabídky", "nabídek")} · společný pro celý tým ENERGO GROUP{offersBusy ? " · načítám…" : ""}</span>}
             </div>
-            {offers.length === 0 ? (
-              <div style={{ fontSize: 12, color: C.muted, padding: "6px 0" }}>Archiv je zatím prázdný. Rozpracovanou nabídku uložíte tlačítkem „💾 Uložit do archivu“.</div>
+            {!supabase ? (
+              <div style={{ fontSize: 12, color: C.red }}>Cloudový archiv není nakonfigurován – chybí VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (Vercel → Environment Variables).</div>
+            ) : !session ? (
+              <form onSubmit={login} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: C.text }}>Přihlaste se firemním účtem:</span>
+                <input type="email" required autoComplete="username" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="e-mail" style={{ ...fieldSty, minWidth: 220 }} />
+                <input type="password" required autoComplete="current-password" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="heslo" style={{ ...fieldSty, minWidth: 160 }} />
+                <button type="submit" disabled={authBusy} style={{ ...btnSec, background: C.accent, color: "#fff", border: "none", opacity: authBusy ? 0.6 : 1 }}>{authBusy ? "Přihlašuji…" : "Přihlásit"}</button>
+                {authError && <span style={{ fontSize: 11, color: C.red }}>{authError}</span>}
+                <span style={{ fontSize: 10, color: C.muted, width: "100%" }}>Účty zakládá správce v Supabase (Authentication → Users). Kalkulačka funguje i bez přihlášení – to je potřeba jen pro ukládání a načítání nabídek.</span>
+              </form>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                      {["Název", "Zákazník", "FVE / Baterie", "Uloženo", ""].map((h, i) => (
-                        <th key={i} style={{ textAlign: "left", padding: "6px 8px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {offers.map(o => (
-                      <tr key={o.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                        <td style={{ padding: "8px", fontWeight: 600, color: C.white }}>{o.name}</td>
-                        <td style={{ padding: "8px", color: C.text }}>{o.customer || "—"}</td>
-                        <td style={{ padding: "8px", color: C.text, fontFamily: font, whiteSpace: "nowrap" }}>{o.data?.pvKwp} kWp / {o.data?.bessKwh} kWh</td>
-                        <td style={{ padding: "8px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(o.savedAt)}</td>
-                        <td style={{ padding: "8px", textAlign: "right", whiteSpace: "nowrap" }}>
-                          <button onClick={() => loadOffer(o)} title="Načte nabídku do kalkulačky" style={{ ...btnSec, display: "inline-flex", padding: "5px 10px", marginRight: 6, background: C.accent, color: "#fff", border: "none" }}>Načíst</button>
-                          <button onClick={() => deleteOffer(o)} title="Odstraní nabídku z archivu" style={{ ...btnSec, display: "inline-flex", padding: "5px 10px", color: C.red }}>Smazat</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                {offersError && <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{offersError}</div>}
+                {offers.length === 0 && !offersBusy ? (
+                  <div style={{ fontSize: 12, color: C.muted, padding: "6px 0" }}>Archiv je zatím prázdný. Rozpracovanou nabídku uložíte tlačítkem „💾 Uložit do archivu“.</div>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                          {["Název", "Zákazník", "FVE / Baterie", "Uložil", "Upraveno", ""].map((h, i) => (
+                            <th key={i} style={{ textAlign: "left", padding: "6px 8px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {offers.map(o => (
+                          <tr key={o.id} style={{ borderBottom: `1px solid ${C.border}`, background: loadedOffer?.id === o.id ? `${C.accent}0d` : "transparent" }}>
+                            <td style={{ padding: "8px", fontWeight: 600, color: C.white }}>{o.name}{loadedOffer?.id === o.id && <span style={{ fontSize: 9, color: C.accent, marginLeft: 6 }}>● načteno</span>}</td>
+                            <td style={{ padding: "8px", color: C.text }}>{o.customer || "—"}</td>
+                            <td style={{ padding: "8px", color: C.text, fontFamily: font, whiteSpace: "nowrap" }}>{o.data?.pvKwp} kWp / {o.data?.bessKwh} kWh</td>
+                            <td style={{ padding: "8px", color: C.muted, whiteSpace: "nowrap" }}>{o.created_by_email || "—"}</td>
+                            <td style={{ padding: "8px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(o.updated_at)}</td>
+                            <td style={{ padding: "8px", textAlign: "right", whiteSpace: "nowrap" }}>
+                              <button onClick={() => loadOffer(o)} title="Načte nabídku do kalkulačky" style={{ ...btnSec, display: "inline-flex", padding: "5px 10px", marginRight: 6, background: C.accent, color: "#fff", border: "none" }}>Načíst</button>
+                              <button onClick={() => deleteOffer(o)} title="Odstraní nabídku ze sdíleného archivu" style={{ ...btnSec, display: "inline-flex", padding: "5px 10px", color: C.red }}>Smazat</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
